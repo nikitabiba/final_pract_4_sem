@@ -10,6 +10,7 @@ from entities.plants.obscurite import Obscurite
 from entities.plants.demi import Demi
 from entities.group import Group
 from logger import setup_logger
+import copy
 
 logger = setup_logger("gui")
 
@@ -17,7 +18,7 @@ logger = setup_logger("gui")
 CELL_SIZE = 30
 CANVAS_WIDTH = GRID_WIDTH * CELL_SIZE
 CANVAS_HEIGHT = GRID_HEIGHT * CELL_SIZE
-MAX_TIME = 24  # 24 часа для симуляции полного дня
+MAX_SIMULATION_TICKS = 2000  # Максимальное количество тиков симуляции
 
 # Цвета для различных типов сущностей
 COLORS = {
@@ -28,6 +29,11 @@ COLORS = {
     'Malheureux': '#800080'  # Фиолетовый для Malheureux
 }
 
+# Цвета для выделений
+HIGHLIGHT_COLORS = {
+    'action_cell': '#DDDDDD'  # Светло-серый цвет для клеток возможных действий
+}
+
 def create_empty_grid(width, height):
     return [[None for _ in range(width)] for _ in range(height)]
 
@@ -35,7 +41,7 @@ def setup_world():
     """Создает и инициализирует мир симуляции"""
     cells = create_empty_grid(GRID_WIDTH, GRID_HEIGHT)
     world = Grid(GRID_WIDTH, GRID_HEIGHT, cells)
-    time_manager = TimeManager(ticks_per_phase=TICKS_PER_PHASE)  # 2 тика на фазу
+    time_manager = TimeManager(ticks_per_phase=TICKS_PER_PHASE)  
     
     # Создаем группы для животных
     pauvre_groups = [Group(i) for i in range(1, 11)]
@@ -98,7 +104,7 @@ def calculate_stats(world):
     
     return stats_text
 
-def update_canvas(window, world):
+def update_canvas(window, world, selected_entity=None):
     """Обновляет отображение мира на канвасе"""
     graph = window['-MAP-']
     graph.erase()
@@ -108,6 +114,25 @@ def update_canvas(window, world):
         graph.draw_line((x, 0), (x, CANVAS_HEIGHT), color='gray')
     for y in range(0, CANVAS_HEIGHT + 1, CELL_SIZE):
         graph.draw_line((0, y), (CANVAS_WIDTH, y), color='gray')
+    
+    # Если есть выбранное животное, подсвечиваем клетки действия
+    action_cells = []
+    if selected_entity and type(selected_entity).__name__ in ['Pauvre', 'Malheureux']:
+        # Соседние клетки - потенциальные клетки действия
+        action_cells = [(selected_entity.x + dx, selected_entity.y + dy) 
+                         for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]
+                         if 0 <= selected_entity.x + dx < world.width and 0 <= selected_entity.y + dy < world.height]
+        
+        # Сначала отрисовываем подсветку для клеток действия
+        for ax, ay in action_cells:
+            pixel_x = ax * CELL_SIZE
+            pixel_y = ay * CELL_SIZE
+            graph.draw_rectangle(
+                (pixel_x, pixel_y),
+                (pixel_x + CELL_SIZE, pixel_y + CELL_SIZE),
+                fill_color=HIGHLIGHT_COLORS['action_cell'],
+                line_color=None
+            )
     
     # Отрисовываем сущности
     for y in range(world.height):
@@ -138,15 +163,19 @@ def update_canvas(window, world):
                     center_x = pixel_x + CELL_SIZE / 2
                     center_y = pixel_y + CELL_SIZE / 2
                     
+                    # Если это выбранное животное - делаем обводку толще
+                    line_width = 3 if entity == selected_entity else 1
+                    
                     graph.draw_circle(
                         (center_x, center_y),
                         radius,
                         fill_color=COLORS[entity_type],
-                        line_color='black'
+                        line_color='black',
+                        line_width=line_width
                     )
 
-def highlight_vision_radius(window, world, mouse_x, mouse_y):
-    """Подсвечивает радиус обзора выбранного животного"""
+def highlight_animal_and_actions(window, world, mouse_x, mouse_y):
+    """Подсвечивает выбранное животное и клетки, куда оно может совершить действие"""
     graph = window['-MAP-']
     
     # Преобразуем координаты мыши в координаты сетки
@@ -157,64 +186,88 @@ def highlight_vision_radius(window, world, mouse_x, mouse_y):
     if 0 <= grid_x < world.width and 0 <= grid_y < world.height:
         entity = world.cells[grid_y][grid_x]
         if entity is not None and type(entity).__name__ in ['Pauvre', 'Malheureux']:
-            # Подсвечиваем радиус обзора для животного
-            # Считаем, что радиус обзора - 1 клетка (можно изменить)
-            vision_radius = 1
+            # Получаем клетки, на которые может воздействовать животное
+            action_cells = []
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = grid_x + dx, grid_y + dy
+                if 0 <= nx < world.width and 0 <= ny < world.height:
+                    action_cells.append((nx, ny))
             
-            for y_offset in range(-vision_radius, vision_radius + 1):
-                for x_offset in range(-vision_radius, vision_radius + 1):
-                    nx, ny = grid_x + x_offset, grid_y + y_offset
-                    if 0 <= nx < world.width and 0 <= ny < world.height:
-                        pixel_x = nx * CELL_SIZE
-                        pixel_y = ny * CELL_SIZE
-                        
-                        # Полупрозрачный круг для области обзора
-                        graph.draw_rectangle(
-                            (pixel_x, pixel_y),
-                            (pixel_x + CELL_SIZE, pixel_y + CELL_SIZE),
-                            fill_color='#FFFF0055',  # Полупрозрачный жёлтый
-                            line_color=None
-                        )
+            # Обновляем канвас с выделенным животным и клетками действия
+            update_canvas(window, world, entity)
             
-            # Добавим информацию об окружении этого животного
+            # Добавляем информацию об окружении этого животного
             neighbors = world.get_neighbors(grid_x, grid_y)
             neighbor_info = f"Животное: {type(entity).__name__} в группе {entity.group.group_number}\n"
             neighbor_info += f"Голод: {entity.hunger}\n"
-            neighbor_info += "Соседи:\n"
+            neighbor_info += f"Активно: {'Да' if entity.timer.current_phase in getattr(entity, 'ACTIVE_PHASES', []) else 'Нет'}\n"
+            neighbor_info += "\nВозможные действия на соседних клетках:\n"
             
-            for neighbor in neighbors:
-                if neighbor[0] is not None:
-                    neighbor_info += f"- {type(neighbor[0]).__name__} на ({neighbor[1]}, {neighbor[2]})\n"
+            # Анализируем возможные действия
+            for i, neighbor in enumerate(neighbors):
+                cell, nx, ny = neighbor
+                actions = []
+                
+                # Клетка для перемещения
+                actions.append("Перемещение")
+                
+                # Проверка на еду
+                if cell is not None:
+                    cell_type = type(cell).__name__
+                    if hasattr(entity, 'eatable_entities') and cell_type in getattr(entity, 'eatable_entities', []):
+                        actions.append("Поедание")
+                    
+                    # Проверка на размножение
+                    if cell_type == type(entity).__name__:
+                        can_reproduce = False
+                        try:
+                            if entity.reproduce_condition and entity.reproduce_condition(entity, cell):
+                                can_reproduce = True
+                        except:
+                            pass
+                        
+                        if can_reproduce:
+                            actions.append("Размножение")
+                        
+                        # Проверка на формирование группы
+                        if entity.group.aggression == 0 and cell.group.aggression == 0:
+                            actions.append("Формирование группы")
+                
+                direction = ["Сверху", "Снизу", "Слева", "Справа"][i]
+                neighbor_info += f"- {direction} ({nx}, {ny}): {', '.join(actions)}\n"
+                if cell is not None:
+                    neighbor_info += f"  Сущность: {type(cell).__name__}\n"
                 else:
-                    neighbor_info += f"- Пусто на ({neighbor[1]}, {neighbor[2]})\n"
+                    neighbor_info += f"  Пусто\n"
                     
             window['-INFO-'].update(neighbor_info)
+            
+            return entity
         else:
             window['-INFO-'].update("Выберите животное для просмотра информации")
+            update_canvas(window, world)
+    
+    return None
 
-def update_simulation(world, time_manager, time_value):
-    """Обновляет состояние симуляции в соответствии с положением ползунка времени"""
-    # Пересчитываем фазу времени на основе значения ползунка
-    if 0 <= time_value <= 6:
-        time_manager.current_phase = 'morning'
-    elif 6 < time_value <= 12:
-        time_manager.current_phase = 'day'
-    elif 12 < time_value <= 18:
-        time_manager.current_phase = 'evening'
-    else:
-        time_manager.current_phase = 'night'
+def run_simulation_for_ticks(world, time_manager, target_tick, current_tick=0):
+    """Запускает симуляцию на указанное количество тиков"""
+    # Сохраняем текущее состояние в истории если нужно возвращаться назад
+    ticks_to_run = target_tick - current_tick
     
-    # Выполняем один шаг симуляции
-    world.tick()
+    if ticks_to_run > 0:
+        # Симуляция вперед
+        for _ in range(ticks_to_run):
+            world.tick()
+            time_manager.advance_time()
     
-    return world, time_manager
+    return world, time_manager, target_tick
 
 def main():
     sg.theme('DefaultNoMoreNagging')  # Устанавливаем тему
     
     # Создаем макет окна
     layout = [
-        [sg.Text('Время суток:'), sg.Slider(range=(0, MAX_TIME), orientation='h', key='-TIME-', enable_events=True, size=(50, 15))],
+        [sg.Text('Тик симуляции:'), sg.Slider(range=(0, MAX_SIMULATION_TICKS), orientation='h', key='-TICKS-', enable_events=True, size=(50, 15))],
         [sg.Text('Текущая фаза:'), sg.Text('morning', size=(10, 1), key='-PHASE-')],
         [sg.Graph(canvas_size=(CANVAS_WIDTH, CANVAS_HEIGHT), 
                   graph_bottom_left=(0, 0), 
@@ -222,7 +275,7 @@ def main():
                   key='-MAP-', 
                   enable_events=True,
                   background_color='white')],
-        [sg.Text('Информация:', size=(15, 1)), sg.Multiline(size=(50, 5), key='-INFO-', disabled=True)],
+        [sg.Text('Информация:', size=(15, 1)), sg.Multiline(size=(50, 8), key='-INFO-', disabled=True)],
         [sg.Multiline(size=(70, 10), key='-STATS-', disabled=True)],
         [sg.Button('Запустить симуляцию', key='-START-'), 
          sg.Button('Пауза', key='-PAUSE-', disabled=True),
@@ -241,7 +294,8 @@ def main():
     # Переменные для управления симуляцией
     running = False
     speed = 5  # Скорость симуляции (обновлений в секунду)
-    last_time = 0
+    current_tick = 0
+    selected_entity = None
     
     # Основной цикл обработки событий
     while True:
@@ -265,60 +319,56 @@ def main():
             window['-START-'].update(disabled=False)
             window['-PAUSE-'].update(disabled=True)
             world, time_manager = setup_world()
-            window['-TIME-'].update(0)
+            window['-TICKS-'].update(0)
+            current_tick = 0
             update_canvas(window, world)
             window['-STATS-'].update(calculate_stats(world))
             window['-PHASE-'].update(time_manager.current_phase)
             
-        if event == '-TIME-':
-            time_value = int(values['-TIME-'])
+        if event == '-TICKS-':
+            target_tick = int(values['-TICKS-'])
             
-            # Обновляем фазу на основе значения ползунка
-            if 0 <= time_value <= 6:
-                time_manager.current_phase = 'morning'
-            elif 6 < time_value <= 12:
-                time_manager.current_phase = 'day'
-            elif 12 < time_value <= 18:
-                time_manager.current_phase = 'evening'
-            else:
-                time_manager.current_phase = 'night'
+            # Обновляем симуляцию до нужного тика
+            world, time_manager, current_tick = run_simulation_for_ticks(world, time_manager, target_tick, current_tick)
                 
             window['-PHASE-'].update(time_manager.current_phase)
             
-            # Обновляем симуляцию и отображение
-            world, time_manager = update_simulation(world, time_manager, time_value)
-            update_canvas(window, world)
+            # Обновляем отображение
+            update_canvas(window, world, selected_entity)
             window['-STATS-'].update(calculate_stats(world))
             
         if event == '-MAP-':
-            # Обработка движения мыши по карте
+            # Обработка клика мыши по карте для выбора животного
             mouse_x, mouse_y = values['-MAP-']
-            highlight_vision_radius(window, world, mouse_x, mouse_y)
+            selected_entity = highlight_animal_and_actions(window, world, mouse_x, mouse_y)
             
         if running:
             # Автоматическое обновление симуляции при работе
             speed = values['-SPEED-']
-            current_time = values['-TIME-']
             
-            # Увеличиваем время
-            new_time = (current_time + speed/50) % MAX_TIME
-            window['-TIME-'].update(new_time)
+            # Увеличиваем тик
+            current_tick += 1
+            if current_tick > MAX_SIMULATION_TICKS:
+                current_tick = MAX_SIMULATION_TICKS
+                running = False
+                window['-START-'].update(disabled=False)
+                window['-PAUSE-'].update(disabled=True)
             
-            # Обновляем фазу на основе нового значения времени
-            if 0 <= new_time <= 6:
-                time_manager.current_phase = 'morning'
-            elif 6 < new_time <= 12:
-                time_manager.current_phase = 'day'
-            elif 12 < new_time <= 18:
-                time_manager.current_phase = 'evening'
-            else:
-                time_manager.current_phase = 'night'
-                
+            window['-TICKS-'].update(current_tick)
+            
+            # Обновляем симуляцию
+            world.tick()
+            time_manager.advance_time()
+            
             window['-PHASE-'].update(time_manager.current_phase)
             
-            # Обновляем симуляцию и отображение
-            world, time_manager = update_simulation(world, time_manager, new_time)
-            update_canvas(window, world)
+            # Обновляем отображение
+            if selected_entity and selected_entity.world:  # Проверяем, что выбранное животное все еще существует
+                update_canvas(window, world, selected_entity)
+            else:
+                selected_entity = None
+                update_canvas(window, world)
+            
             window['-STATS-'].update(calculate_stats(world))
             
     window.close()

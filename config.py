@@ -2,7 +2,7 @@
 
 # Размеры сетки
 GRID_WIDTH = 40
-GRID_HEIGHT = 15
+GRID_HEIGHT = 12
 
 # Начальное количество сущностей
 INITIAL_LUMIERE_COUNT = 5
