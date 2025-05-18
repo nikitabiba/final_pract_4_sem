@@ -16,7 +16,7 @@ INITIAL_MALHEUREUX_COUNT = 20
 SIMULATION_TICKS = 100
 
 # Настройки времени суток
-TICKS_PER_PHASE = 5  # Каждая фаза длится 5 тиков
+TICKS_PER_PHASE = 6  # Каждая фаза длится 6 тиков
 
 # Логгирование
 LOG_TO_FILE = True
