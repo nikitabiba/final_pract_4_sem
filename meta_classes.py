@@ -57,23 +57,24 @@ class EvalPlantMeta(EcosystemMeta):
                     if self.world is not None:
                         neighbors = self.world.get_neighbors(self.x, self.y)
                         for neighbor in neighbors:
-                            if neighbor[0] is not None and isinstance(neighbor[0], type(bases[0])):
+                            is_grow = random.choice(range(30))
+                            if neighbor[0] is not None and type(type(neighbor[0])) == EvalPlantMeta and is_grow == 0:
                                 if type(self) != type(neighbor[0]):
                                     captured = random.choices(
                                         [True, False], 
                                         weights=[0.5 + 0.25*self.active - 0.25*neighbor[0].active, 
                                                 0.5 - 0.25*self.active + 0.25*neighbor[0].active]
                                     )[0]
-                                    
                                     if captured:
                                         x, y = neighbor[0].x, neighbor[0].y
                                         logger.debug(f"Plant {self.symbol} at ({self.x}, {self.y}) captured {neighbor[0].symbol} at ({x}, {y})")
                                         self.world.remove_entity(neighbor[0])
                                         self.world.duplicate_entity(self, x, y)
-                            elif neighbor[0] is None:
+                                        break
+                            elif neighbor[0] is None and is_grow == 0:
                                 logger.debug(f"Plant {self.symbol} at ({self.x}, {self.y}) spread to empty space at ({neighbor[1]}, {neighbor[2]})")
                                 self.world.duplicate_entity(self, neighbor[1], neighbor[2])
-                            break
+                                break
 
             def act(self):
                 self.grow()
@@ -137,29 +138,42 @@ class EvalAnimalMeta(EcosystemMeta):
                                 self.world.remove_entity(neighbor[0])
                                 if isinstance(neighbor[0], type(bases[0])):
                                     neighbor[0].group.remove_member(neighbor[0])
-                                self.hunger += 50
+                                self.hunger += 100
+                                self.hunger = min(self.hunger, 100)
                                 break
                 else:
-                    neighbors = self.world.get_neighbors(self.x, self.y)
-                    for neighbor in neighbors:
-                        if (neighbor[0] is not None and 
-                            (type(neighbor[0]).__name__ in food_sources or 
-                            (self.group.aggression == 1 and self.eat_condition(self, neighbor[0])))):
-                            logger.debug(f"Animal {self.symbol} at ({self.x}, {self.y}) ate entity at ({neighbor[0].x}, {neighbor[0].y}).")
-                            self.world.remove_entity(neighbor[0])
-                            if isinstance(neighbor[0], type(bases[0])):
-                                neighbor[0].group.remove_member(neighbor[0])
-                            self.hunger += 50
-                            break
+                    if self.world is not None:
+                        neighbors = self.world.get_neighbors(self.x, self.y)
+                        for neighbor in neighbors:
+                            is_eat = False
+                            try:
+                                is_eat = self.eat_condition(self, neighbor[0])
+                            except TypeError:
+                                is_eat = False
+                            if (neighbor[0] is not None and 
+                                (type(neighbor[0]).__name__ in food_sources or 
+                                (self.group.aggression == 1 and is_eat))):
+                                logger.debug(f"Animal {self.symbol} at ({self.x}, {self.y}) ate entity at ({neighbor[0].x}, {neighbor[0].y}).")
+                                self.world.remove_entity(neighbor[0])
+                                if isinstance(neighbor[0], type(bases[0])):
+                                    neighbor[0].group.remove_member(neighbor[0])
+                                self.hunger += 100
+                                self.hunger = min(self.hunger, 100)
+                                break
             
             def reproduce(self):
                 if self.world is not None:
                     neighbors = self.world.get_neighbors(self.x, self.y)
                     for neighbor in neighbors:
+                        is_reproduce = False
+                        try:
+                            is_reproduce = self.reproduce_condition(self, neighbor[0])
+                        except TypeError:
+                            is_reproduce = False
                         if (type(neighbor[0]) == type(self) and 
                             self.group.aggression == 0 and 
-                            neighbor[0].group.aggression == 0 and 
-                            self.reproduce_condition(self, neighbor[0])):
+                            neighbor[0].group.aggression == 0 and
+                            is_reproduce):
                             for n in neighbors:
                                 if n[0] is None:
                                     new_entity = copy.deepcopy(self)
@@ -170,20 +184,21 @@ class EvalAnimalMeta(EcosystemMeta):
                                     break
             
             def form_group(self):
-                neighbors = self.world.get_neighbors(self.x, self.y)
-                for neighbor in neighbors:
-                    if (type(neighbor[0]) == type(self) and 
-                        self.group.aggression == 0 and 
-                        neighbor[0].group.aggression == 0):
-                        new_group = random.choice([self.group, neighbor[0].group])
-                        if self.group != new_group:
-                            neighbor[0].group.add_member(self)
-                            self.group.remove_member(self)
-                        else:
-                            self.group.add_member(neighbor[0])
-                            neighbor[0].group.remove_member(neighbor[0])
-                        logger.debug(f"Animal {self.symbol} at ({self.x}, {self.y}) formed a group {new_group.group_number} with animal at ({neighbor[0].x}, {neighbor[0].y}).")
-                        break
+                if self is not None and self.world is not None:
+                    neighbors = self.world.get_neighbors(self.x, self.y)
+                    for neighbor in neighbors:
+                        if (type(neighbor[0]) == type(self) and 
+                            self.group.aggression == 0 and 
+                            neighbor[0].group.aggression == 0):
+                            new_group = random.choice([self.group, neighbor[0].group])
+                            if self.group != new_group:
+                                neighbor[0].group.add_member(self)
+                                self.group.remove_member(self)
+                            else:
+                                self.group.add_member(neighbor[0])
+                                neighbor[0].group.remove_member(neighbor[0])
+                            logger.debug(f"Animal {self.symbol} at ({self.x}, {self.y}) formed a group {new_group.group_number} with animal at ({neighbor[0].x}, {neighbor[0].y}).")
+                            break
             
             def act(self):
                 if self.timer.current_phase in active_phases:
